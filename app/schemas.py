@@ -38,10 +38,18 @@ class GetUserResponse(BaseModel):
     User: UserBaseSchema
 
 
+class PaginationMeta(BaseModel):
+    page: int
+    limit: int
+    total: int
+    pages: int
+
+
 class ListUserResponse(BaseModel):
     status: Status
     results: int
     users: List[UserBaseSchema]
+    pagination: PaginationMeta | None = None
 
 
 class DeleteUserResponse(BaseModel):
