@@ -1,9 +1,12 @@
 import app.schemas as schemas
 import app.models as models
 from sqlalchemy.orm import Session
+from sqlalchemy import or_, and_, func
 from sqlalchemy.exc import IntegrityError
-from fastapi import Depends, HTTPException, status, APIRouter
+from fastapi import Depends, HTTPException, status, APIRouter, Query
 from app.database import get_db
+from typing import Optional
+import math
 
 router = APIRouter()
 
@@ -133,17 +136,60 @@ def delete_user(userId: str, db: Session = Depends(get_db)):
     "/", status_code=status.HTTP_200_OK, response_model=schemas.ListUserResponse
 )
 def get_users(
-    db: Session = Depends(get_db), limit: int = 10, page: int = 1, search: str = ""
+    db: Session = Depends(get_db),
+    limit: int = Query(10, ge=1, le=100, description="Items per page"),
+    page: int = Query(1, ge=1, description="Page number"),
+    search: str = Query("", description="Search in first_name, last_name, or address"),
+    activated: Optional[bool] = Query(None, description="Filter by activation status"),
+    sort_by: str = Query("createdAt", description="Sort by field (createdAt, first_name, last_name)"),
+    order: str = Query("desc", description="Sort order (asc or desc)")
 ):
     skip = (page - 1) * limit
 
-    users = (
-        db.query(models.User)
-        .filter(models.User.first_name.contains(search))
-        .limit(limit)
-        .offset(skip)
-        .all()
+    # Build the query
+    query = db.query(models.User)
+    
+    # Apply search filter if provided
+    if search:
+        search_filter = or_(
+            models.User.first_name.ilike(f"%{search}%"),
+            models.User.last_name.ilike(f"%{search}%"),
+            models.User.address.ilike(f"%{search}%")
+        )
+        query = query.filter(search_filter)
+    
+    # Apply activation filter if provided
+    if activated is not None:
+        query = query.filter(models.User.activated == activated)
+    
+    # Get total count before pagination
+    total = query.count()
+    
+    # Apply sorting
+    if sort_by in ["first_name", "last_name", "createdAt"]:
+        sort_column = getattr(models.User, sort_by)
+        if order.lower() == "asc":
+            query = query.order_by(sort_column.asc())
+        else:
+            query = query.order_by(sort_column.desc())
+    
+    # Apply pagination
+    users = query.limit(limit).offset(skip).all()
+    
+    # Calculate total pages
+    total_pages = math.ceil(total / limit) if limit > 0 else 1
+    
+    # Create pagination metadata
+    pagination_meta = schemas.PaginationMeta(
+        page=page,
+        limit=limit,
+        total=total,
+        pages=total_pages
     )
+    
     return schemas.ListUserResponse(
-        status=schemas.Status.Success, results=len(users), users=users
+        status=schemas.Status.Success, 
+        results=len(users), 
+        users=users,
+        pagination=pagination_meta
     )
